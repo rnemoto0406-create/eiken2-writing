@@ -26,6 +26,11 @@ body{margin:0}
 .authf label{display:flex;flex-direction:column;gap:6px;font-weight:700;font-size:.92rem}
 .authf input{font:inherit;font-weight:500;padding:12px 14px;border:2px solid var(--sky-2);border-radius:var(--r-s);background:var(--bg);color:var(--ink)}
 .authf input:focus{outline:none;border-color:var(--sky-3)}
+.authf select,.authf textarea{font:inherit;font-weight:500;padding:12px 14px;border:2px solid var(--sky-2);border-radius:var(--r-s);background:var(--bg);color:var(--ink)}
+.authf select:focus,.authf textarea:focus{outline:none;border-color:var(--sky-3)}
+.plans{display:flex;flex-direction:column;gap:8px}
+.plans label{flex-direction:row;align-items:center;gap:10px;font-weight:500;padding:10px 12px;border:2px solid var(--sky-2);border-radius:var(--r-s);background:var(--bg);cursor:pointer}
+.plans label:has(input:checked){border-color:var(--red)}
 .authf .btn{justify-content:center}
 .linkbtn{background:none;border:0;padding:0;color:var(--sky-3);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;align-self:flex-start}
 .acct{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
@@ -339,6 +344,8 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 let LOG = [];
 const AUTH = { ready:false, user:null, me:null, mode:"login", busy:false, err:"", info:"" };
 const canAI = ()=>!!(AUTH.me && AUTH.me.student && AUTH.me.student.active);
+const isTrial = ()=>!!(AUTH.me && AUTH.me.student && AUTH.me.student.plan==="trial");
+const trialDone = ()=>isTrial() && AUTH.me.gradesToday>=AUTH.me.gradeLimit;
 async function callAI(body){
   const { data:{ session } } = await sb.auth.getSession();
   if(!session) throw { code:"session_expired" };
@@ -360,6 +367,7 @@ async function loadAccount(){
   LOG = (res.data||[]).map(r=>({ date:new Date(r.created_at).toLocaleDateString("sv-SE"), qid:r.qid, step:r.step, mode:r.mode,
     total:r.total, min:r.min_score, used:r.used||[], words:r.words }));
   AUTH.me = me;
+  try{ const ap = await sb.from("applications").select("id").limit(1); AUTH.applied = !!(ap.data && ap.data.length); }catch(e){ AUTH.applied=false; }
 }
 sb.auth.onAuthStateChange((ev, session)=>{
   const u = session ? session.user : null;
@@ -393,6 +401,54 @@ async function doAuth(email, password){
       : "うまくいきませんでした。もう一度";
   }
   AUTH.busy=false; render();
+}
+function applyCard(){
+  if(AUTH.applied) return $(`<section class="hero"><div class="row"><span class="tag red">仮申込済み</span></div><span>講師から開始日をご連絡します。お待ちください</span></section>`);
+  const c=$(`<section class="hero"><div class="row"><span class="tag red">仮申込</span></div>
+    <strong>この採点と赤ペンを 毎日2題 続けられます</strong>
+    <p class="small muted" style="margin:0">料金はまだかかりません。講師から内容と開始日をご連絡します</p>
+    <div><button class="btn btn-red btn-big" id="toapply">申し込む</button></div></section>`);
+  c.querySelector("#toapply").onclick=()=>{ S.view="apply"; render(); window.scrollTo(0,0); };
+  return c;
+}
+function applyView(){
+  const el=$(`<div class="wrap" style="gap:14px;max-width:560px"></div>`);
+  if(AUTH.applied){
+    el.append(applyCard());
+    const b=$(`<button class="btn btn-sky" style="align-self:flex-start">ホーム</button>`); b.onclick=()=>{ S.view="home"; render(); }; el.append(b);
+    return el;
+  }
+  const f=$(`<form class="authf hero" id="apf" novalidate>
+    <h2 style="margin:0">仮申込</h2>
+    <p class="small muted" style="margin:0">料金はまだかかりません。内容を見て講師からご連絡します</p>
+    <label>お名前(ニックネーム可)<input id="ap-name" maxlength="40" autocomplete="nickname" required></label>
+    <label>学年<select id="ap-year"><option value="">選んでください</option><option>中学生</option><option>高校1年</option><option>高校2年</option><option>高校3年</option><option>大学生</option><option>社会人</option><option>その他</option></select></label>
+    <label>受験予定<select id="ap-exam"><option value="">選んでください</option><option>2027年1月(第3回)</option><option>2027年6月(第1回)</option><option>未定</option></select></label>
+    <span style="font-weight:700;font-size:.92rem">希望プラン</span>
+    <div class="plans" role="radiogroup" aria-label="希望プラン">
+      <label><input type="radio" name="ap-plan" value="app">アプリ 30日60題 ¥9,800</label>
+      <label><input type="radio" name="ap-plan" value="coach">アプリ+週1面談 ¥29,800(月10名)</label>
+      <label><input type="radio" name="ap-plan" value="undecided">まだ迷っている</label>
+    </div>
+    <label>連絡先(インスタ・TikTokのID LINEなど 任意)<input id="ap-contact" maxlength="80"></label>
+    <label>ひとこと(任意)<textarea id="ap-note" rows="3" maxlength="400" placeholder="困っていること 聞きたいことなど"></textarea></label>
+    ${AUTH.apErr?`<p class="err">${esc(AUTH.apErr)}</p>`:""}
+    <div class="row"><button type="button" class="btn btn-sky" id="ap-back">戻る</button><button class="btn btn-red btn-big" id="ap-send" ${AUTH.busy?"disabled":""}>申し込む</button></div>
+  </form>`);
+  f.querySelector("#ap-back").onclick=()=>{ AUTH.apErr=""; S.view="home"; render(); };
+  f.addEventListener("submit",async ev=>{ ev.preventDefault();
+    const v=id=>f.querySelector(id).value.trim();
+    const plan=(f.querySelector('input[name="ap-plan"]:checked')||{}).value||"";
+    if(!v("#ap-name")||!v("#ap-year")||!v("#ap-exam")||!plan){ AUTH.apErr="お名前 学年 受験予定 プランを入れてください"; render(); return; }
+    AUTH.busy=true; AUTH.apErr="";
+    const { error } = await sb.from("applications").insert({ email:AUTH.user.email||null, name:v("#ap-name"), school_year:v("#ap-year"), exam:v("#ap-exam"), plan,
+      contact:v("#ap-contact")||null, note:v("#ap-note")||null, diag_total: LOG.length ? LOG[LOG.length-1].total : null });
+    AUTH.busy=false;
+    if(error){ AUTH.apErr="送れませんでした。もう一度"; render(); return; }
+    AUTH.applied=true; toast("仮申込を受け付けました"); render(); window.scrollTo(0,0);
+  });
+  el.append(f);
+  return el;
 }
 function authView(){
   const login = AUTH.mode==="login";
@@ -440,6 +496,7 @@ function level(log=store.get()){
 }
 // おまかせ:今のステップで解いた回数が一番少ない問題
 function pick(log=store.get()){
+  if(isTrial()) return { qid:"q1", step:3 };
   const lv=level(log);
   const cands=QUESTIONS.filter(q=>lv>1 || q.reasons);
   let best=cands[0], bc=Infinity;
@@ -460,6 +517,7 @@ function render(){
   if(S.view==="home") app.append(home());
   else if(S.view==="write") app.append(write());
   else if(S.view==="dex") app.append(dex());
+  else if(S.view==="apply") app.append(applyView());
   else app.append(result());
   tipify();
   if(S.view==="write" && S.step===3 && !document.activeElement?.matches?.("textarea")){ const f=document.getElementById("free"); if(f && !S.free) f.focus(); }
@@ -506,10 +564,14 @@ function home(){
     b.querySelector("#drop").onclick=()=>{ clearDraft(); render(); };
     el.append(b);
   }
-  if(!canAI()) el.append($(`<p class="note">${AUTH.me?"受講登録の確認待ちです。登録が済むとAI採点が使えます("+esc(AUTH.user.email||"")+")":"サーバーにつながりません。時間をおいて開き直してください"}</p>`));
+  if(!AUTH.me) el.append($(`<p class="note">サーバーにつながりません。時間をおいて開き直してください</p>`));
+  else if(isTrial()){
+    if(trialDone()){ el.append(applyCard()); return el; }
+    else el.append($(`<p class="note">無料診断:白紙から1題書くと AIが採点と赤ペンを返します(1回)</p>`));
+  }
   const p=pick(); const q=QUESTIONS.find(x=>x.id===p.qid);
   const hero=$(`<section class="hero">
-    <div class="row"><span class="tag red">今日の1題</span><span class="tag" title="${STEP_TIP[p.step]}">ステップ${p.step}</span><span class="tag">${q.type}</span><span class="tag">練習</span></div>
+    <div class="row"><span class="tag red">${isTrial()?"無料診断":"今日の1題"}</span><span class="tag" title="${STEP_TIP[p.step]}">ステップ${p.step}</span><span class="tag">${q.type}</span><span class="tag">練習</span></div>
     <p class="q">${esc(q.en)}</p>
     <p class="small muted">${esc(q.ja)}</p>
     <div><button class="btn btn-red btn-big" id="go">${IC.play}はじめる<kbd>${KEY_SUBMIT}</kbd></button></div>
@@ -731,7 +793,7 @@ async function suggest(){
   S.aiState="idle"; render();
 }
 function errCopy(code){
-  return ({not_granted:"受講登録の確認待ちです",rate_limited:"今日の回数を使い切りました。明日また使えます",session_expired:"ログインし直してください",invalid_json:"答えの形が崩れました。もう一度",network:"通信できませんでした。接続を確かめてもう一度",server_config:"採点の準備中です。少し待ってください",bad_request:"送った内容を確かめてください"}[code]) || "受け取れませんでした。もう一度";
+  return ({not_granted:"受講登録の確認待ちです",rate_limited:"今日の回数を使い切りました。明日また使えます",session_expired:"ログインし直してください",invalid_json:"答えの形が崩れました。もう一度",network:"通信できませんでした。接続を確かめてもう一度",trial_used:"無料診断は1回までです。続けるには申し込んでください",server_config:"採点の準備中です。少し待ってください",bad_request:"送った内容を確かめてください"}[code]) || "受け取れませんでした。もう一度";
 }
 
 // ---------- 採点 ----------
@@ -858,8 +920,9 @@ function result(){
   }
   if(S.local && S.answerText){ const w=$(`<div style="grid-column:1/-1"></div>`); w.append(localBlock()); head.append(w); }
   el.append(head);
+  if(isTrial() && S.gradeState!=="loading") el.append(applyCard());
 
-  if(doneToday){
+  if(doneToday && !isTrial()){
     const t=pick();
     const tq=QUESTIONS.find(q=>q.id===t.qid);
     el.append($(`<div class="done-card"><strong>今日の${DAILY}題 完了</strong><span class="small muted">明日 ステップ${t.step} ${tq.type}</span><p class="q">${esc(tq.en)}</p></div>`));
