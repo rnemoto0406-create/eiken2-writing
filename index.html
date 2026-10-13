@@ -757,7 +757,7 @@ async function submit(auto){
     const clamp=(v)=>Math.max(0,Math.min(4,Math.round(Number(v)||0)));
     S.result={ scores:{content:clamp(sc.content),organization:clamp(sc.organization),vocabulary:clamp(sc.vocabulary),grammar:clamp(sc.grammar)},
       comments:r.comments||{}, summary:String(r.summary||""), improved:String(r.improved||""),
-      edits:(Array.isArray(r.edits)?r.edits:[]).slice(0,8).map(e=>({before:String(e&&e.before||""),after:String(e&&e.after||""),why:String(e&&e.why||"")})).filter(e=>e.before||e.after),
+      edits:(Array.isArray(r.edits)?r.edits:[]).slice(0,8).map(e=>({before:String(e&&e.before||""),after:String(e&&e.after||""),why:String(e&&e.why||"")})).filter(e=>(e.before||e.after) && e.before.replace(/\s+/g," ").trim()!==e.after.replace(/\s+/g," ").trim()),
       used:Array.isArray(r.used)?r.used.map(String):[] };
     const vals=Object.values(S.result.scores); const total=vals.reduce((a,b)=>a+b,0);
     const P=S.prev; const seen=new Set();
